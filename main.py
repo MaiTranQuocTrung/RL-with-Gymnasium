@@ -1,6 +1,6 @@
 import gymnasium as gym
 from neural_nets import Network, DuelingNet
-from models import NFQ
+from models import NFQ,DQN
 
 env_id = "CartPole-v1"
 env = gym.make(id=env_id, render_mode="human")
@@ -15,4 +15,5 @@ dueling = DuelingNet(input_size=state_space, action_space=action_space)
 
 
 # train our network
-NFQ.train_model(model=mlp, model_id= "mlp", env_id=env_id)
+#NFQ.train_model(model=mlp, model_id="mlp", env_id=env_id)
+DQN.train_model(model=mlp, model_id="mlp", env_id=env_id)
