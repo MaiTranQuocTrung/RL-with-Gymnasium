@@ -43,17 +43,18 @@ class DuelingNet(nn.Module):
         )
 
         # This head should output a single float32 (maybe switch to 64?) defined as V(s) = value of state independent of actions
+        h1_size = int(hidden_size / 2)
         self.value_head = nn.Sequential(
-            nn.Linear(hidden_size, 64),
+            nn.Linear(hidden_size, h1_size),
             nn.ReLU(),
-            nn.Linear(64, 1)
+            nn.Linear(h1_size, 1)
         )
 
         # This head should output a vector of length action_space
         self.advantage_head = nn.Sequential(
-            nn.Linear(hidden_size, 64),
+            nn.Linear(hidden_size, h1_size),
             nn.ReLU(),
-            nn.Linear(64, action_space)
+            nn.Linear(h1_size, action_space)
         )
 
     def forward(self, x):

@@ -1,5 +1,6 @@
 import torch
 import gymnasium as gym
+import numpy as np
 
 '''
     Returns Q(s, a) for all actions given next_state.
@@ -22,6 +23,8 @@ def get_all_q(next_state, model):
 
 def evaluate_policy(
         model,
+        solved_threshold,
+        success_threshold,
         env_id : str,
         verbose: bool = False,
         n_episodes=100,
@@ -57,11 +60,9 @@ def evaluate_policy(
 
         total += episode_reward
 
-        # This is cartpole_v1 depdendent I though 195 is a decent benchmark for success
-        if episode_reward >= 195:
+        if episode_reward >= success_threshold:
             successes += 1
-        # Usually 500 is maximum sucess but I'm easing a bit here as a balance between v0 and v1
-        if episode_reward >= 495:
+        if episode_reward >= solved_threshold:
             solved += 1
 
     env.close()

@@ -9,6 +9,8 @@ from helper_functions import get_all_q, evaluate_policy
 def train_model(
                 model,
                 model_id: str,
+                solved_threshold: float,
+                success_threshold: float,
                 env_id,
                 self_train_itr: int = 40,
                 dataset_size: int = 2000,
@@ -121,12 +123,12 @@ def train_model(
 
             losses.append(k_loss / len(loader))
 
-        avg_reward_per_episodes = evaluate_policy(model, env_id, verbose=True, record=False)
+        avg_reward_per_episodes = evaluate_policy(model, solved_threshold=solved_threshold, success_threshold=success_threshold, env_id=env_id, verbose=True, record=False)
         total_rewards.append(avg_reward_per_episodes)
         print(f"Total env step: {total_env_step}")
 
         # If the model already has optimal policy don't explore more, that's not needed, just more noise
-        if avg_reward_per_episodes >= 500.0 and not saved:
+        if avg_reward_per_episodes >= solved_threshold and not saved:
             print(f"\nSolved in {i + 1} iterations!")
             torch.save(model.state_dict(), f"{model_id}_NFQ_solved.pth")
             return losses, total_rewards
