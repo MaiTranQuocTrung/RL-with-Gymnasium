@@ -20,7 +20,7 @@ def train_model(
                 verbose = False,
                 ):
 
-
+    total_env_step = 0
     saved = False
 
     # create a new env to build our dataset
@@ -74,6 +74,7 @@ def train_model(
             r_raw[step] = reward
             d_raw[step] = float(is_failure)
 
+            total_env_step+=1
             # if we haven't collected enough data, reset the env
             if isTerminate or truncated:
                 state, _ = env_collect.reset()
@@ -94,26 +95,23 @@ def train_model(
             # Recalculate targets in one batched forward pass!!! This is the main source of instability
             model.eval()
             with torch.no_grad():
-                q_current = model(X_tensor)                 # (2000, action_space) => current Q(s, a) for all actions
                 q_next = model(X_next_tensor)               # (2000, action_space) => Q(s', a) for next state actions
                 max_q_next = q_next.max(dim=1)[0]            # (2000,) => get the biggest Q(s', a) value
-                q_star = r_tensor + gamma * max_q_next * (1.0 - d_tensor) # Update using Q-learning formula, notice 1.0 - d_tensor, this is a nice way of not using if else
+                q_target = r_tensor + gamma * max_q_next * (1.0 - d_tensor) # Update using Q-learning formula, notice 1.0 - d_tensor, this is a nice way of not using if else
 
-                # Most models here use .gather() which works kind of the same
-                targets = q_current.clone() # copy current predictions, we don't really care about those values only that the model should get q_star right (since those are copied over when doing MSE everything but the q_star value will get a none zero value)
-                # the arange is needed since we are processing a batch of data at once for efficiency
-                targets[torch.arange(dataset_size), a_tensor] = q_star  # overwrite taken action
 
             # Train on fresh targets
             model.train()
 
             # Notice shuffle here, this is extremely important
-            loader = DataLoader(TensorDataset(X_tensor, targets), batch_size=batch_size, shuffle=True)
+            loader = DataLoader(TensorDataset(X_tensor, a_tensor, q_target), batch_size=batch_size, shuffle=True)
 
             k_loss = 0
-            for X_batch, y_batch in loader:
-                y_hat = model(X_batch)
-                loss = loss_fn(y_hat, y_batch)
+            for X_batch, a_tensor_batch, y_batch in loader:
+                q_values = model(X_batch)
+                # specifically the action chosen by the agent
+                q_selected = q_values.gather(1, a_tensor_batch.unsqueeze(1)).squeeze(1)
+                loss = loss_fn(q_selected, y_batch)
                 optimizer.zero_grad()
                 loss.backward()
                 # avoids gradient explosion which is quite common in RL algorithms, not necessary but good to just have
@@ -125,13 +123,12 @@ def train_model(
 
         avg_reward_per_episodes = evaluate_policy(model, env_id, verbose=True, record=False)
         total_rewards.append(avg_reward_per_episodes)
-
+        print(f"Total env step: {total_env_step}")
 
         # If the model already has optimal policy don't explore more, that's not needed, just more noise
         if avg_reward_per_episodes >= 500.0 and not saved:
             print(f"\nSolved in {i + 1} iterations!")
-            torch.save(model.state_dict(), f"{model_id}_solved.pth")
-            saved = True
-            epsilon = 0.05
+            torch.save(model.state_dict(), f"{model_id}_NFQ_solved.pth")
+            return losses, total_rewards
 
     return losses, total_rewards
