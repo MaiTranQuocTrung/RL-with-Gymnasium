@@ -1,4 +1,6 @@
 import torch.nn as nn
+import torch
+
 
 class Network(nn.Module):
     """Standard MLP Q-network."""
@@ -81,4 +83,39 @@ class DuelingNet(nn.Module):
         A = self._forward_layers(trunk, self.advantage_head)
         return V + A - A.mean(dim=1, keepdim=True)
 
+
+class REINFORCE_Network(nn.Module):
+    def __init__(self, input_size, action_space, hidden_sizes=None, discrete: bool = False):
+        super().__init__()
+        if hidden_sizes is None:
+            hidden_sizes = [256, 128]
+        self.discrete = discrete
+        self.relu = nn.ReLU()
+        self.softmax = nn.Softmax(dim=-1)
+
+        layer_sizes = [input_size] + hidden_sizes
+        self.input_layer = nn.Linear(layer_sizes[0], layer_sizes[1])
+
+        self.hidden_layers = nn.ModuleList(
+            nn.Linear(layer_sizes[i], layer_sizes[i + 1]) for i in range(1, len(layer_sizes) - 1)
+        )
+
+        self.out_layer_discrete = nn.Linear(layer_sizes[-1], action_space)
+        # each action has its own mean and std to sample from
+        self.out_layer_continuous = nn.Linear(layer_sizes[-1], action_space * 2)
+
+    def forward(self, x):
+        out = self.relu(self.input_layer(x))
+        for layer in self.hidden_layers:
+            out = self.relu(layer(out))
+
+        if self.discrete:
+            out = self.softmax(self.out_layer_discrete(out))
+            return out
+
+        else:
+            mean, log_std = out.chunk(2, dim=-1)
+            mean = torch.tanh(mean)  # squish to (-1, 1)
+            std = log_std.exp().clamp(1e-3, 1.0)  # must be positive
+            return mean, std
 

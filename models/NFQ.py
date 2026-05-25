@@ -130,7 +130,7 @@ def train_model(
         # If the model already has optimal policy don't explore more, that's not needed, just more noise
         if avg_reward_per_episodes >= solved_threshold and not saved:
             print(f"\nSolved in {i + 1} iterations!")
-            torch.save(model.state_dict(), f"{model_id}_NFQ_solved.pth")
+            torch.save(model.state_dict(), f"solved models/{model_id}_NFQ_solved.pth")
             return losses, total_rewards
 
     return losses, total_rewards

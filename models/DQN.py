@@ -77,7 +77,7 @@ def train_model(
             next_state, reward, terminated, truncated, info = env_collect.step(action)
 
             '''
-                
+                Cartpole truncation is actually not a failure so we need to account for that (very minor issue though)
             '''
             if env_id == "CartPole-v1":
                 is_truncated = 'TimeLimit.truncated' in info and info['TimeLimit.truncated']
@@ -103,20 +103,20 @@ def train_model(
                 is_failures = torch.tensor(is_failures, dtype=torch.float32)
 
                 # Target Q-values
-                """
+                '''
                     Vanilla DQN style: Get the maximum Q(s,a) from target net and use that for target
                                         This means (s,a) picked and generating its Q(s,a) is done by the same network
-                """
+                '''
                 if not double_dqn:
                     with torch.no_grad():
                         q_next = target_network(next_states).max(dim=1)[0]
                         q_target = rewards + gamma * q_next * (1 - is_failures)
 
-                """
+                '''
                     Double DQN: Get the maximum Q(s,a) is done by 2 networks
                                 Online model picks the (s,a) where a is the action that maximizes Q(s,a) for online network
                                 Target model generates Q(s,a), what the target thinks Q(s,a) should be
-                """
+                '''
                 if double_dqn:
                     with torch.no_grad():
                         # picking the best actions
@@ -135,12 +135,12 @@ def train_model(
                 losses.append(loss.item())
 
         print(f"Total env step: {total_steps}")
-        avg_reward_per_episodes = evaluate_policy(model, solved_threshold=solved_threshold, success_threshold=success_threshold, env_id=env_id, verbose=True, record=False)
+        avg_reward_per_episodes = evaluate_policy(model, solved_threshold=solved_threshold, success_threshold=success_threshold, env_id=env_id, verbose=True)
         total_rewards.append(avg_reward_per_episodes)
 
         if avg_reward_per_episodes >= solved_threshold and not saved:
             print(f"\nSolved in {i + 1} iterations!")
-            torch.save(model.state_dict(), f"{model_id}_{env_id}_DQN_solved.pth")
+            torch.save(model.state_dict(), f"solved models/{model_id}_{env_id}_DQN_solved.pth")
             return losses, total_rewards
 
 

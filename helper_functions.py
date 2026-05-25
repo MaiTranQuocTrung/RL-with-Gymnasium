@@ -1,6 +1,5 @@
 import torch
 import gymnasium as gym
-import numpy as np
 
 '''
     Returns Q(s, a) for all actions given next_state.
@@ -28,7 +27,6 @@ def evaluate_policy(
         env_id : str,
         verbose: bool = False,
         n_episodes=100,
-        record: bool = False
 ):
     env = gym.make(env_id)
 
@@ -71,8 +69,14 @@ def evaluate_policy(
 
     if verbose:
         print(f"Avg reward: {avg:.1f}, 200 steps: {successes}/{n_episodes}, Fully solved: {solved}/{n_episodes}")
-
-    if record:
-        return avg, recorded_episode
-
     return avg
+
+
+def polyak_update(main_model, target_model, tau=0.005):
+    """
+    Softly update target_model parameters toward main_model.
+    """
+    with torch.no_grad():
+        for p_main, p_targ in zip(main_model.parameters(), target_model.parameters()):
+            p_targ.data.mul_(1 - tau)
+            p_targ.data.add_(tau * p_main.data)
