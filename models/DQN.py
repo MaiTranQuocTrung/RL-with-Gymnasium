@@ -3,9 +3,6 @@ import torch.nn as nn
 import gymnasium as gym
 import numpy as np
 import random
-
-from torch.utils.data import DataLoader, TensorDataset
-
 from helper_functions import get_all_q, evaluate_policy
 from collections import deque
 import copy
@@ -25,6 +22,7 @@ def train_model(
                 gamma: float = 0.99,
                 buffer_size: int = 50_000,
                 min_sample: int = 320,
+                batch_size: int = 64,
                 verbose = True
                 ):
     saved = False
@@ -95,7 +93,7 @@ def train_model(
             # we can start sampling from buffer when it is sufficiently big
             if len(replay_buffer) > min_sample:
                 # sample min_sample from replay buffer
-                states, actions, rewards, next_states, is_failures = zip(*random.sample(replay_buffer, min_sample))
+                states, actions, rewards, next_states, is_failures = zip(*random.sample(replay_buffer, batch_size))
 
                 # convert to tensors to input into our model
                 states = torch.from_numpy(np.array(states)).float()
@@ -126,24 +124,15 @@ def train_model(
                         q_next = target_network(next_states).gather(1, actions_picked.unsqueeze(1)).squeeze(1)
                         q_target = rewards + gamma * q_next * (1 - is_failures)
 
-                # training stats
-                epoch_loss = 0
-
-                # We must take in actions to use in training
-                loader = DataLoader(TensorDataset(states, actions, q_target),batch_size=64,shuffle=True)
-
-                # train our network on data
-                for X_batch, action_batch, y_batch in loader:
-                    q_values = model(X_batch)
-                    # the agent picked an action during collection, therefore, q_target is only relevant to that specific q value
-                    q_selected = q_values.gather(1, action_batch.unsqueeze(1)).squeeze(1)
-                    loss = loss_fn(q_selected, y_batch)
-                    optimizer.zero_grad()
-                    loss.backward()
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10)
-                    optimizer.step()
-                    epoch_loss += loss.item()
-                losses.append(epoch_loss / len(loader))
+                # training
+                q_values = model(states)
+                q_selected = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)
+                loss = loss_fn(q_selected, q_target)
+                optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10)
+                optimizer.step()
+                losses.append(loss.item())
 
         print(f"Total env step: {total_steps}")
         avg_reward_per_episodes = evaluate_policy(model, solved_threshold=solved_threshold, success_threshold=success_threshold, env_id=env_id, verbose=True, record=False)
