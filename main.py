@@ -1,42 +1,64 @@
 import gymnasium as gym
 import torch
-from neural_nets import Network, DuelingNet, REINFORCE_Network
-from models import NFQ,DQN, REINFORCE
-import numpy as np
-from helper_functions import get_all_q
+from neural_nets import Network, REINFORCE_Network
+from models import A3C, A2C
+from helper_functions import evaluate_policy_continuous
+import torch.multiprocessing as mp
 
-env_id = "CartPole-v1"
+env_id = "HalfCheetah-v5"
 env = gym.make(id=env_id, render_mode="human")
 
 state_space = env.observation_space.shape[0]
-action_space = env.action_space.n
-
+action_space = env.action_space.shape[0]
 
 #define our models
-mlp = Network(input_size=state_space, action_space=action_space, hidden_sizes=[256, 256])
-dueling = DuelingNet(input_size=state_space, action_space=action_space, trunk_sizes=[512, 256], value_sizes=[128], advantage_sizes=[128])
-reinforce_net = REINFORCE_Network(input_size=state_space, action_space=action_space, hidden_sizes=[256, 256], discrete=True)
+reinforce_net_policy = REINFORCE_Network(input_size=state_space, action_space=action_space, hidden_sizes=[256, 256], discrete=False)
+reinforce_net_value = Network(input_size=state_space, action_space=1, hidden_sizes=[256, 256])
 
-# train our network
-#NFQ.train_model(model=dueling, model_id="mlp", solved_threshold=500, success_threshold=200, env_id=env_id)
-#DQN.train_model(model=mlp, model_id="mlp", solved_threshold=500, success_threshold=200, env_id=env_id, eps_steps_decay= 2000)
-'''DQN.train_model(model=mlp, model_id="mlp", solved_threshold=260, success_threshold=200,
-                env_id=env_id, sync_freq=500, min_sample=2500, model_learning_rate=0.0002,
-                self_train_itr=500_000, eps_steps_decay= 150_000)'''
-#REINFORCE.train_model(model=reinforce_net, model_id="reinforce_net", solved_threshold=500, success_threshold=200,env_id=env_id)
+if __name__ == '__main__':
+    '''
+    mp.set_start_method('spawn')
+    A3C.train_model(
+            global_net_policy=reinforce_net_policy,
+            global_net_value=reinforce_net_value,
+            model_str='reinforce_net_cont',
+            env_id=env_id,
+            solved_threshold=9100,
+            success_threshold=7000,
+            n_steps=30,
+            self_train_itr=100_000,
+            gamma=0.99,
+            n_workers=6,
+            test_freq=50,
+            model_policy_learning_rate=0.0001,
+            model_value_learning_rate=0.0001,
+            entropy_coef= 0.01,
+    )
+    '''
 
-# run a demo
-truncated = terminated = False
-state, _ = env.reset()
+    A2C.train_model(model_value=reinforce_net_value,
+                    model_policy=reinforce_net_policy,
+                    model_id="Reinforce_Net",
+                    env_id=env_id,
+                    solved_threshold=4100,
+                    success_threshold=2800,
+                    n_steps=40,
+                    self_train_itr=100_000,
+                    gamma=0.99,
+                    n_workers=10,
+                    test_freq=50,
+                    entropy_coef=0.01,
+                    model_policy_learning_rate = 0.0001,
+                    model_value_learning_rate = 0.0001,
+                    verbose= True,
+    )
 
-# load model
-state_dict = torch.load('solved models/reinforce_net_CartPole-v1_REINFORCE_solved.pth', weights_only=True)
-reinforce_net.load_state_dict(state_dict)
-reinforce_net.eval()
 
-while not(truncated or terminated):
-    action = np.argmax(get_all_q(state, reinforce_net))
-    next_state, reward, terminated, truncated, info = env.step(action)
-    state = next_state
-    env.render()
-env.close()
+    # load model
+'''
+    state_dict = torch.load('solved models/reinforce_net_cont_InvertedPendulum-v5_A3C_solved.pth', weights_only=True)
+    reinforce_net_policy.load_state_dict(state_dict)
+    reinforce_net_policy.eval()
+    
+    evaluate_policy_continuous(reinforce_net_policy, solved_threshold=9100.0, success_threshold=8000.0, n_episodes=1,render=True, env_id=env_id)
+'''

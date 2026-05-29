@@ -114,8 +114,10 @@ class REINFORCE_Network(nn.Module):
             return out
 
         else:
+            out = self.out_layer_continuous(out)
             mean, log_std = out.chunk(2, dim=-1)
-            mean = torch.tanh(mean)  # squish to (-1, 1)
-            std = log_std.exp().clamp(1e-3, 1.0)  # must be positive
+            log_std = log_std.clamp(-6, 0.5)
+            std = log_std.exp()
+
             return mean, std
 

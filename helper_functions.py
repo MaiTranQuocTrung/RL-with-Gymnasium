@@ -35,9 +35,6 @@ def evaluate_policy(
 
     solved = 0
 
-    # this is used if you want to record some training footage
-    recorded_episode = None
-
     for ep in range(n_episodes):
         state, _ = env.reset()
         done = False
@@ -68,9 +65,64 @@ def evaluate_policy(
     avg = total / n_episodes
 
     if verbose:
-        print(f"Avg reward: {avg:.1f}, 200 steps: {successes}/{n_episodes}, Fully solved: {solved}/{n_episodes}")
+        print(f"Avg reward: {avg:.1f}, Successful threshold: {successes}/{n_episodes}, Fully solved: {solved}/{n_episodes}")
     return avg
 
+def evaluate_policy_continuous(
+        model,
+        solved_threshold,
+        success_threshold,
+        env_id : str,
+        verbose: bool = False,
+        n_episodes=100,
+        render: bool = False,
+):
+    env = gym.make(env_id, render_mode="human" if render else None)
+
+    total = 0
+    successes = 0
+
+    solved = 0
+
+    for ep in range(n_episodes):
+        state, _ = env.reset()
+        done = False
+        episode_reward = 0
+
+        while not done:
+            with torch.no_grad():
+                x = torch.tensor(state, dtype=torch.float32)
+
+                # feed to the model which returns mean and std
+                mean, std = model(x)
+
+                # create gaussian dist
+                dist = torch.distributions.Normal(loc=mean, scale=std)
+                action = dist.sample().clamp(env.action_space.low[0], env.action_space.high[0])
+
+            state, reward, terminated, truncated, _ = env.step(action.detach().numpy())
+
+            if render:
+                env.render()
+
+            done = terminated or truncated
+
+            episode_reward += reward
+
+        total += episode_reward
+
+        if episode_reward >= success_threshold:
+            successes += 1
+        if episode_reward >= solved_threshold:
+            solved += 1
+
+    env.close()
+
+    avg = total / n_episodes
+
+    if verbose:
+        print(f"Avg reward: {avg:.1f}, Successful threshold: {successes}/{n_episodes}, Fully solved: {solved}/{n_episodes}")
+    return avg
 
 def polyak_update(main_model, target_model, tau=0.005):
     """

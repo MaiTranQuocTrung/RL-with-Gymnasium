@@ -2,13 +2,13 @@ import gymnasium as gym
 import torch
 from helper_functions import evaluate_policy
 
-
+# noinspection PyUnboundLocalVariable
 def train_model(
-        model,
         model_id : str,
         env_id,
         solved_threshold: float,
         success_threshold: float,
+        model = None,
         self_train_itr: int = 100_000,
         model_learning_rate: float = 0.0005,
         gamma: float = 0.99,
@@ -30,55 +30,77 @@ def train_model(
         if verbose:
             print(f"Model: {model_id}, Self training itr: {i + 1}")
             print(f"Env steps: {env_steps}")
+
         # Monte carlo style collection
         episode = []
 
         state, _ = env.reset()
         terminated = truncated = False
+
         while not(terminated or truncated):
+
             # probability distribution of actions (probability of taking an action at a given state)
-            probs = model(torch.tensor(state))
+            probs = model(torch.tensor(state, dtype=torch.float32))
+
             # create a distribution, meaning idx binded to probabilities
             dist = torch.distributions.Categorical(probs=probs)
+
             # This is a weighted sample which mimics Softmax Exploration
             action = dist.sample().squeeze().item()
 
             next_state, reward, terminated, truncated, info = env.step(action)
-
             episode.append((state, action, reward))
 
             state = next_state
             env_steps += 1
 
-
         # calculate discounted returns
         returns = []
         G = 0.0
+
         for _, _, reward in reversed(episode):
             G = G * gamma + reward
             returns.append(G)
 
         returns.reverse()
+        returns = torch.tensor(returns, dtype=torch.float32)
+
 
         # calculate the total loss and optimize
-        total_loss = torch.tensor(0.0)
+        total_loss = 0
+
         for (state, action, _), G in zip(episode, returns):
-            probs = model(torch.tensor(state))
+
+            probs = model(torch.tensor(state, dtype=torch.float32))
             dist = torch.distributions.Categorical(probs=probs)
-            total_loss += -dist.log_prob(torch.tensor(action)) * G
 
-        optimizer.zero_grad()
-        total_loss.backward()
-        optimizer.step()
-        losses.append(total_loss.item())
+            """
+                log_prob(action): how confident the policy was in choosing this action
+                G: how good the rest of the episode turned out after taking this action
+                log_prob * G = "how confident we were" * "how good it turned out"
+                we want to maximize our confidence with a high G, meaning we want to minimize total_loss hence the "-"
+            """
 
-        avg_reward_per_episodes = evaluate_policy(model, solved_threshold=solved_threshold, success_threshold=success_threshold, env_id=env_id, verbose=True)
-        total_rewards.append(avg_reward_per_episodes)
+            total_loss += -dist.log_prob(torch.tensor(action, dtype=torch.int64)) * G
 
-        if avg_reward_per_episodes >= solved_threshold:
-            print(f"\nSolved in {i + 1} iterations!")
-            torch.save(model.state_dict(), f"solved models/{model_id}_{env_id}_REINFORCE_solved.pth")
-            return losses, total_rewards
+            optimizer.zero_grad()
+            total_loss.backward()
+            optimizer.step()
+            losses.append(total_loss.item())
+
+            avg_reward_per_episodes = evaluate_policy(model,solved_threshold=solved_threshold,success_threshold=success_threshold,env_id=env_id,verbose=True)
+
+            total_rewards.append(avg_reward_per_episodes)
+
+            if avg_reward_per_episodes >= solved_threshold:
+                print(f"\nSolved in {i + 1} iterations!")
+
+                torch.save(
+                    model.state_dict(),
+                    f"solved models/{model_id}_{env_id}_REINFORCE_solved.pth"
+                )
+
+                return losses, total_rewards
 
     return losses, total_rewards
 

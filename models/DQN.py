@@ -25,7 +25,6 @@ def train_model(
                 batch_size: int = 64,
                 verbose = True
                 ):
-    saved = False
     # create a new env to build our dataset
     env_collect = gym.make(env_id)
 
@@ -138,7 +137,7 @@ def train_model(
         avg_reward_per_episodes = evaluate_policy(model, solved_threshold=solved_threshold, success_threshold=success_threshold, env_id=env_id, verbose=True)
         total_rewards.append(avg_reward_per_episodes)
 
-        if avg_reward_per_episodes >= solved_threshold and not saved:
+        if avg_reward_per_episodes >= solved_threshold:
             print(f"\nSolved in {i + 1} iterations!")
             torch.save(model.state_dict(), f"solved models/{model_id}_{env_id}_DQN_solved.pth")
             return losses, total_rewards

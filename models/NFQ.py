@@ -23,7 +23,6 @@ def train_model(
                 ):
 
     total_env_step = 0
-    saved = False
 
     # create a new env to build our dataset
     env_collect = gym.make(env_id)
@@ -128,7 +127,7 @@ def train_model(
         print(f"Total env step: {total_env_step}")
 
         # If the model already has optimal policy don't explore more, that's not needed, just more noise
-        if avg_reward_per_episodes >= solved_threshold and not saved:
+        if avg_reward_per_episodes >= solved_threshold:
             print(f"\nSolved in {i + 1} iterations!")
             torch.save(model.state_dict(), f"solved models/{model_id}_NFQ_solved.pth")
             return losses, total_rewards
