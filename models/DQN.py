@@ -3,7 +3,7 @@ import torch.nn as nn
 import gymnasium as gym
 import numpy as np
 import random
-from helper_functions import get_all_q, evaluate_policy
+from helper_functions import get_all_q, evaluate_policy_discrete
 from collections import deque
 import copy
 
@@ -134,7 +134,9 @@ def train_model(
                 losses.append(loss.item())
 
         print(f"Total env step: {total_steps}")
-        avg_reward_per_episodes = evaluate_policy(model, solved_threshold=solved_threshold, success_threshold=success_threshold, env_id=env_id, verbose=True)
+        avg_reward_per_episodes = evaluate_policy_discrete(model, solved_threshold=solved_threshold,
+                                                           success_threshold=success_threshold, env_id=env_id,
+                                                           verbose=True)
         total_rewards.append(avg_reward_per_episodes)
 
         if avg_reward_per_episodes >= solved_threshold:

@@ -2,7 +2,7 @@ import gymnasium as gym
 import torch
 import numpy as np
 from torch.utils.data import TensorDataset, DataLoader
-from helper_functions import evaluate_policy_continuous, setup_envs
+from helper_functions import evaluate_policy_continuous_on_policy, setup_envs
 from gymnasium.wrappers import NormalizeObservation, TransformObservation
 
 
@@ -76,8 +76,6 @@ def train_model(
                 # V(s) from value network
                 old_values = model_value(torch.tensor(states, dtype=torch.float32)).squeeze(-1).detach()
 
-            # avoids illegal actions
-            #clipped_actions = actions.clamp(envs.single_action_space.low[0], envs.single_action_space.high[0])
             next_states, rewards, terminated, truncated, infos = envs.step(actions.detach().numpy())
 
             # because at 1000 steps the agent teleports back to the start with a reward of 0 before terminating/truncating
@@ -135,7 +133,7 @@ def train_model(
             # Need to check both V(s) and V(s') because of vectorized env
             delta = t_rewards + gamma * next_value * (1 - t_dones) - values[t].squeeze(-1)
 
-            # delta + gamma * delta
+            # A_t = δ_t + γλ * A_{t+1}
             gae = delta + gamma * lamda * (1 - t_dones) * gae
             gae_collection[t] = gae
             next_value = values[t].squeeze(-1)
@@ -169,6 +167,7 @@ def train_model(
             for batch in dataloader:
                 # 3. Unpack the exact mini-batch instantly
                 mb_states, mb_actions, mb_old_log_probs, mb_old_values, mb_advantages, mb_returns = batch
+
                 # make current normal dist
                 means_current, stds_current = model_policy(mb_states)
                 dists_current = torch.distributions.Normal(means_current, stds_current)
@@ -181,6 +180,7 @@ def train_model(
                 # calculate ratio between new and old action log probs, how much better or worse
                 # the network thinks an action is
                 # ratio = exp(new - old)
+                # this is the same as new prob/old pob
                 ratio = torch.exp(current_log_probs - mb_old_log_probs)
 
                 # calculate clipped and non clipped "advantages * log_probs"
@@ -231,14 +231,9 @@ def train_model(
                 eval_env_unwrapped.obs_rms.var = train_env_unwrapped.obs_rms.var.copy()
                 eval_env_unwrapped.obs_rms.count = train_env_unwrapped.obs_rms.count
 
-            avg_reward_per_ep = evaluate_policy_continuous(
-                model_policy,
-                solved_threshold=solved_threshold,
-                success_threshold=success_threshold,
-                n_episodes=20,
-                verbose=verbose,
-                env=eval_env,
-            )
+            avg_reward_per_ep = evaluate_policy_continuous_on_policy(model_policy, solved_threshold=solved_threshold,
+                                                                     success_threshold=success_threshold, env=eval_env,
+                                                                     verbose=verbose, n_episodes=20)
             total_rewards.append(avg_reward_per_ep)
 
             if avg_reward_per_ep >= solved_threshold:

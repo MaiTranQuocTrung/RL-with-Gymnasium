@@ -1,6 +1,8 @@
 import gymnasium as gym
+import numpy as np
 import torch
-from helper_functions import evaluate_policy
+from helper_functions import evaluate_policy_discrete, make_env, evaluate_policy_continuous_on_policy
+from gymnasium.wrappers import NormalizeObservation, TransformObservation
 
 # noinspection PyUnboundLocalVariable
 def train_model(
@@ -14,7 +16,7 @@ def train_model(
         gamma: float = 0.99,
         verbose: bool = True,
 ):
-    env = gym.make(env_id)
+    env = make_env(env_id)
 
     # stats tracker
     losses = []
@@ -88,7 +90,13 @@ def train_model(
             optimizer.step()
             losses.append(total_loss.item())
 
-            avg_reward_per_episodes = evaluate_policy(model,solved_threshold=solved_threshold,success_threshold=success_threshold,env_id=env_id,verbose=True)
+            eval_env = gym.make(env_id)
+            eval_env = NormalizeObservation(eval_env)
+            eval_env = TransformObservation(eval_env, lambda obs: np.clip(obs, -10.0, 10.0), eval_env.observation_space)
+
+            avg_reward_per_episodes = evaluate_policy_continuous_on_policy(model, solved_threshold=solved_threshold,
+                                                                           success_threshold=success_threshold,
+                                                                           env=eval_env, verbose=verbose, n_episodes=20)
 
             total_rewards.append(avg_reward_per_episodes)
 

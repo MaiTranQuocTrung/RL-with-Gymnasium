@@ -1,19 +1,19 @@
 import gymnasium as gym
 import torch
 import numpy as np
-from helper_functions import evaluate_policy_continuous
+from helper_functions import evaluate_policy_continuous_on_policy, setup_envs
+from gymnasium.wrappers import NormalizeObservation, TransformObservation
 
 def train_model(
-        model_id: str,
         env_id,
         solved_threshold: float,
         success_threshold: float,
         test_freq: int = 10,
         n_workers:int = 4,
-        n_steps: int = 500,
+        n_steps: int = 30,
         model_policy=None,
         model_value=None,
-        entropy_coef: float = 0.05,
+        entropy_coef: float = 0.01,
         self_train_itr: int = 100_000,
         model_policy_learning_rate: float = 0.0001,
         model_value_learning_rate: float = 0.001,
@@ -21,23 +21,35 @@ def train_model(
         lamda: float = 0.95,
         verbose: bool = True,
 ):
-    envs = gym.make_vec(env_id, num_envs=n_workers, vectorization_mode="sync")
+    envs = setup_envs(env_id, n_workers, gamma)
+
+    states, _ = envs.reset()
+
     state_dim = envs.single_observation_space.shape[0]
     action_dim = envs.single_action_space.shape[0]
-    action_high = torch.tensor(envs.single_action_space.high, dtype=torch.float32)
 
     # stats tracker
     losses = []
     total_rewards = []
     env_steps = 0
 
-    optimizer_policy = torch.optim.RMSprop(model_policy.parameters(), lr=model_policy_learning_rate)
-    optimizer_value = torch.optim.RMSprop(model_value.parameters(), lr=model_value_learning_rate)
+    optimizer_policy = torch.optim.Adam(model_policy.parameters(), lr=model_policy_learning_rate)
+    optimizer_value = torch.optim.Adam(model_value.parameters(), lr=model_value_learning_rate)
 
     # state shape: (n_workers, obs_dim)
     states, _ = envs.reset()
 
+
     for i in range(self_train_itr):
+        # linear decay lr, start at base lr to 10% of lr towards the end
+        frac = 1.0 - (i / self_train_itr)
+        for param_group in optimizer_policy.param_groups:
+            param_group["lr"] = max(frac * model_policy_learning_rate, model_policy_learning_rate * 0.1)
+        for param_group in optimizer_value.param_groups:
+            param_group["lr"] = max(frac * model_value_learning_rate, model_value_learning_rate * 0.1)
+
+        # do the same with entropy
+        current_entropy_coef = max(frac * entropy_coef, entropy_coef * 0.1)
 
         # TD(lambda) style collection
         episode = []
@@ -49,21 +61,37 @@ def train_model(
                 # Get V(s) and (mean, std) for Gaussian distribution
                 means, stds = model_policy(torch.tensor(states, dtype=torch.float32))
                 '''
-                raw_means, stds = model_policy(torch.tensor(states, dtype=torch.float32))
-                means = torch.tanh(raw_means) * action_high
+                means, stds = model_policy(torch.tensor(states, dtype=torch.float32))
                 # create Gaussian
                 dists = torch.distributions.Normal(loc=means, scale=stds)
                 # Sample to get action
                 actions = dists.sample()
 
             # avoids illegal actions
-            clipped_actions = actions.clamp(envs.single_action_space.low[0],envs.single_action_space.high[0])
-            next_states, rewards, terminated, truncated, infos = envs.step(clipped_actions.detach().numpy())
+            #clipped_actions = actions.clamp(envs.single_action_space.low[0],envs.single_action_space.high[0])
+            next_states, rewards, terminated, truncated, infos = envs.step(actions.detach().numpy())
+
+            # because at 1000 steps the agent teleports back to the start with a reward of 0 before terminating/truncating
+            # just before the truncation happens we must assign the true reward value to it and treat truncation as termination
+            # this means no bootstrapping. This is logical because truncation also teleports the agent back to the start
+            if "final_observation" in infos:
+                for w in range(n_workers):
+                    # Only bootstrap if it hit the 1,000 step limit (truncated)
+                    if infos["_final_observation"][w] and truncated[w]:
+                        # Get the true state BEFORE the auto-reset
+                        final_obs = infos["final_observation"][w]
+                        final_obs_tensor = torch.tensor(final_obs, dtype=torch.float32).unsqueeze(0)
+
+                        # Predict V(s) for the true final state
+                        terminal_value = model_value(final_obs_tensor).squeeze(-1).item()
+
+                        # Fold it directly into the reward for this step
+                        rewards[w] += gamma * terminal_value
 
             # Save step and continue
-            episode.append((states, actions, rewards, terminated))
+            episode.append((states, actions, rewards, np.logical_or(terminated, truncated)))
             states = next_states
-            env_steps += 1
+            env_steps += n_workers
             env_n_steps += 1
 
         # determine if we need bootstrap
@@ -103,13 +131,9 @@ def train_model(
         all_states = torch.tensor(np.array([s for s, _, _, _ in episode]), dtype=torch.float32)
         all_actions = torch.stack([a for _, a, _, _ in episode])
 
-        ''''# get means and std to make multiple dists
-        means, stds = model_policy(all_states.view(-1, state_dim))'''
-
-        '''means = means.view(env_n_steps, n_workers, action_dim)'''
-        raw_means, stds = model_policy(all_states.view(-1, state_dim))
-        scaled_means = torch.tanh(raw_means) * action_high
-        means = scaled_means.view(env_n_steps, n_workers, action_dim)
+        # get means and std to make multiple dists
+        means, stds = model_policy(all_states.view(-1, state_dim))
+        means = means.view(env_n_steps, n_workers, action_dim)
         stds = stds.view(env_n_steps, n_workers, action_dim)
 
         # V(s)
@@ -118,20 +142,15 @@ def train_model(
 
         dists = torch.distributions.Normal(means, stds)
         entropy = dists.entropy().sum(-1)  # shape (T, n_workers)
-        weighted_entropy = entropy * entropy_coef
+        weighted_entropy = entropy * current_entropy_coef
         log_probs = dists.log_prob(all_actions).sum(-1)  # shape (T, n_workers)
 
         advantages = gae_collection.detach()
-        # normalize advantage
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-        # clamping to avoid grad explosion
-        advantages = torch.clamp(advantages, -2.0, 2.0)
         loss_policy = -(advantages * log_probs + weighted_entropy).mean()
 
         # Reconstruct the target Return (R = A + V) or (R = gae + V(s)) derived from A = R - V(s)
         returns = gae_collection + values.detach()
-        # try l1 instead of MSE
-        loss_value = torch.nn.functional.smooth_l1_loss(value_preds, returns)
+        loss_value = torch.nn.functional.mse_loss(value_preds, returns)
 
         optimizer_policy.zero_grad()
         loss_policy.backward()
@@ -144,25 +163,40 @@ def train_model(
         optimizer_value.step()
 
         if i % test_freq == 0:
-            if verbose: print(f"Env step: {env_steps}")
-            avg_reward_per_ep = evaluate_policy_continuous(
-                model_policy,
-                solved_threshold=solved_threshold,
-                success_threshold=success_threshold,
-                env_id=env_id,
-                n_episodes=20,
-                verbose=verbose,
-            )
-            total_rewards.append(avg_reward_per_ep)
+            if verbose: print(f"Self-train itr: {i} | Env step: {env_steps}")
 
+            eval_env = gym.make(env_id)
+            eval_env = NormalizeObservation(eval_env)
+            eval_env = TransformObservation(eval_env, lambda obs: np.clip(obs, -10.0, 10.0), eval_env.observation_space)
+
+            train_env_unwrapped = envs
+            while not hasattr(train_env_unwrapped, 'obs_rms') and hasattr(train_env_unwrapped, 'env'):
+                train_env_unwrapped = train_env_unwrapped.env
+
+            eval_env_unwrapped = eval_env
+            while not hasattr(eval_env_unwrapped, 'obs_rms') and hasattr(eval_env_unwrapped, 'env'):
+                eval_env_unwrapped = eval_env_unwrapped.env
+
+            if hasattr(train_env_unwrapped, 'obs_rms') and hasattr(eval_env_unwrapped, 'obs_rms'):
+                eval_env_unwrapped.obs_rms.mean = train_env_unwrapped.obs_rms.mean.copy()
+                eval_env_unwrapped.obs_rms.var = train_env_unwrapped.obs_rms.var.copy()
+                eval_env_unwrapped.obs_rms.count = train_env_unwrapped.obs_rms.count
+
+            avg_reward_per_ep = evaluate_policy_continuous_on_policy(model_policy, solved_threshold=solved_threshold,
+                                                                     success_threshold=success_threshold, env=eval_env,
+                                                                     verbose=verbose, n_episodes=20)
+            total_rewards.append(avg_reward_per_ep)
+            '''
             if avg_reward_per_ep >= success_threshold:
                 torch.save(
                     model_policy.state_dict(),
                     f"checkpoint models/{model_id}_{env_id}_checkpoint_{avg_reward_per_ep:.0f}.pth"
                 )
-
+            '''
             if avg_reward_per_ep >= solved_threshold:
-                torch.save(model_policy.state_dict(), f"solved models/{model_id}_{env_id}_A2C_solved.pth")
+                torch.save(model_policy.state_dict(), f"solved models/{env_id}_A2C_solved.pth")
+                np.save(f"solved dist stats/A2C_{env_id}_mean.npy", eval_env_unwrapped.obs_rms.mean)
+                np.save(f"solved dist stats/A2C_{env_id}_var.npy", eval_env_unwrapped.obs_rms.var)
                 print("Solved! Model saved.")
                 return losses, total_rewards
 

@@ -4,7 +4,7 @@ import gymnasium as gym
 import numpy as np
 import random
 from torch.utils.data import DataLoader, TensorDataset
-from helper_functions import get_all_q, evaluate_policy
+from helper_functions import get_all_q, evaluate_policy_discrete
 
 def train_model(
                 model,
@@ -122,7 +122,9 @@ def train_model(
 
             losses.append(k_loss / len(loader))
 
-        avg_reward_per_episodes = evaluate_policy(model, solved_threshold=solved_threshold, success_threshold=success_threshold, env_id=env_id, verbose=True, record=False)
+        avg_reward_per_episodes = evaluate_policy_discrete(model, solved_threshold=solved_threshold,
+                                                           success_threshold=success_threshold, env_id=env_id,
+                                                           verbose=True)
         total_rewards.append(avg_reward_per_episodes)
         print(f"Total env step: {total_env_step}")
 

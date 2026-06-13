@@ -1,7 +1,8 @@
 import gymnasium as gym
+import numpy as np
 import torch
-from helper_functions import evaluate_policy, evaluate_policy_continuous
-
+from helper_functions import evaluate_policy_discrete, evaluate_policy_continuous_on_policy, make_env
+from gymnasium.wrappers import NormalizeObservation, TransformObservation
 
 # noinspection PyUnboundLocalVariable
 def train_model(
@@ -18,7 +19,7 @@ def train_model(
         verbose: bool = True,
         is_discrete: bool = True,
 ):
-    env = gym.make(env_id)
+    env = make_env(env_id)
 
     # stats tracker
     losses = []
@@ -132,13 +133,9 @@ def train_model(
             loss_value.backward()
             optimizer_value.step()
 
-            avg_reward_per_episodes = evaluate_policy(
-                model_policy_discrete,
-                solved_threshold=solved_threshold,
-                success_threshold=success_threshold,
-                env_id=env_id,
-                verbose=True
-            )
+            avg_reward_per_episodes = evaluate_policy_discrete(model_policy_discrete, solved_threshold=solved_threshold,
+                                                               success_threshold=success_threshold, env_id=env_id,
+                                                               verbose=True)
 
             total_rewards.append(avg_reward_per_episodes)
 
@@ -164,7 +161,7 @@ def train_model(
 
                 dist = torch.distributions.Normal(loc=mean, scale=std)
 
-                # Dont really know what this does but target needs it
+
                 entropy = dist.entropy().sum()
                 weighted_entropy = 0.01 * entropy.mean()
 
@@ -186,13 +183,15 @@ def train_model(
             loss_value.backward()
             optimizer_value.step()
 
-            avg_reward_per_episodes = evaluate_policy_continuous(
-                model_policy,
-                solved_threshold=solved_threshold,
-                success_threshold=success_threshold,
-                env_id=env_id,
-                verbose=True
-            )
+            # create normalized env
+            eval_env = gym.make(env_id)
+            eval_env = NormalizeObservation(eval_env)
+            eval_env = TransformObservation(eval_env, lambda obs: np.clip(obs, -10.0, 10.0), eval_env.observation_space)
+
+            avg_reward_per_episodes = evaluate_policy_continuous_on_policy(model_policy,
+                                                                           solved_threshold=solved_threshold,
+                                                                           success_threshold=success_threshold,
+                                                                           env=eval_env, verbose=verbose, n_episodes=20)
 
             total_rewards.append(avg_reward_per_episodes)
 

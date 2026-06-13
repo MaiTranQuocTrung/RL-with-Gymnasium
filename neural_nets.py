@@ -1,16 +1,18 @@
 import torch.nn as nn
 import torch
-
+import numpy as np
 
 class Network(nn.Module):
     """Standard MLP Q-network."""
 
-    def __init__(self, input_size, action_space, hidden_sizes=None):
+    def __init__(self, input_size, action_space, hidden_sizes=None, output_activation: bool = False):
         super().__init__()
         if hidden_sizes is None:
             hidden_sizes = [256, 128]
 
+        self.output_activation = output_activation
         self.relu = nn.ReLU()
+        self.tanh = nn.Tanh()
         layer_sizes = [input_size] + hidden_sizes
 
         self.input_layer = nn.Linear(layer_sizes[0], layer_sizes[1])
@@ -32,7 +34,10 @@ class Network(nn.Module):
             out = self.relu(layer(out))
 
         # return result after passing through our output layer
-        return self.outl(out)
+        if not self.output_activation:
+            return self.outl(out)
+        else:
+            return self.tanh(self.outl(out))
 
 
 class DuelingNet(nn.Module):
@@ -84,40 +89,85 @@ class DuelingNet(nn.Module):
         return V + A - A.mean(dim=1, keepdim=True)
 
 
-class REINFORCE_Network(nn.Module):
-    def __init__(self, input_size, action_space, hidden_sizes=None, discrete: bool = False):
+class ContinuousNetwork(nn.Module):
+    def __init__(self, input_size, action_space, hidden_sizes=None, log_init: float = -1):
         super().__init__()
         if hidden_sizes is None:
-            hidden_sizes = [256, 128]
-        self.discrete = discrete
-        self.relu = nn.ReLU()
-        self.softmax = nn.Softmax(dim=-1)
+            hidden_sizes = [256, 256]
 
+        self.activation = nn.Tanh()
+
+        # Build the network trunk
         layer_sizes = [input_size] + hidden_sizes
-        self.input_layer = nn.Linear(layer_sizes[0], layer_sizes[1])
+        layers = []
+        for i in range(len(layer_sizes) - 1):
+            layers.append(nn.Linear(layer_sizes[i], layer_sizes[i + 1]))
+            layers.append(self.activation)
+        self.trunk = nn.Sequential(*layers)
 
-        self.hidden_layers = nn.ModuleList(
-            nn.Linear(layer_sizes[i], layer_sizes[i + 1]) for i in range(1, len(layer_sizes) - 1)
-        )
+        self.action_mean = nn.Linear(hidden_sizes[-1], action_space)
 
-        self.out_layer_discrete = nn.Linear(layer_sizes[-1], action_space)
-        # each action has its own mean and std to sample from
-        self.out_layer_continuous = nn.Linear(layer_sizes[-1], action_space * 2)
+        # nn.Parameter is literally a stand-alone set of tensors that can tweakable
+        #self.action_logstd = nn.Parameter(torch.zeros(action_space))
+        self.action_logstd = nn.Parameter(torch.full((action_space,), -1.0))
+
+        self._init_weights()
+
+    def _init_weights(self):
+        # Orthogonal initialization makes a massive difference in early training stability
+        for m in self.trunk.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.orthogonal_(m.weight, gain=np.sqrt(2))
+                nn.init.constant_(m.bias, 0.0)
+
+        # Scale down the output layer weight so initial actions are near 0
+        nn.init.orthogonal_(self.action_mean.weight, gain=0.01)
+        nn.init.constant_(self.action_mean.bias, 0.0)
 
     def forward(self, x):
+        hidden_features = self.trunk(x)
+        mean = self.action_mean(hidden_features)
+
+        # expand log_std to match the batch dimensions of the mean
+        # this means from (,6) to (batch_size, 6)
+        std = torch.exp(self.action_logstd).expand_as(mean)
+
+        return mean, std
+
+
+class CriticNetwork(nn.Module):
+    def __init__(self, state_dim, action_dim, hidden_sizes=None):
+        super().__init__()
+
+        if hidden_sizes is None:
+            hidden_sizes = [256, 128]
+
+        self.relu = nn.ReLU()
+
+        input_size = state_dim + action_dim
+        layer_sizes = [input_size] + hidden_sizes
+
+        self.input_layer = nn.Linear(layer_sizes[0], layer_sizes[1])
+        self.hidden_layers = nn.ModuleList(
+            [nn.Linear(layer_sizes[i], layer_sizes[i + 1]) for i in range(1, len(layer_sizes) - 1)]
+        )
+        # Outputs a single Q-value evaluation
+        self.outl = nn.Linear(layer_sizes[-1], 1)
+
+    def forward(self, state, action):
+        # Concatenate the state and action tensors side-by-side
+        # If state is [batch_size, 27] and action is [batch_size, 8]
+        # x will become [batch_size, 35]
+        x = torch.cat([state, action], dim=1)
+
+        # first output is from our input layer (feature extraction)
         out = self.relu(self.input_layer(x))
+
+        # go through our hidden layers
         for layer in self.hidden_layers:
             out = self.relu(layer(out))
 
-        if self.discrete:
-            out = self.softmax(self.out_layer_discrete(out))
-            return out
+        # return result after passing through our output layer
+        return self.outl(out)
 
-        else:
-            out = self.out_layer_continuous(out)
-            mean, log_std = out.chunk(2, dim=-1)
-            log_std = log_std.clamp(-6, 0.5)
-            std = log_std.exp()
-
-            return mean, std
 
