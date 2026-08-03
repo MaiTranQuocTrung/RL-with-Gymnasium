@@ -10,5 +10,6 @@ Algorithms implemented:
 - PPO
 - DDPG
 - SAC
+
 Environments:
 - All mujoco envs
